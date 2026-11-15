@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+
+# 测试运行时产物（CI 中按 artifact 上传，不入库）
+reports/
+ai_data/
+report/
+html/
+allure-results/
+allure-report/
+
+# Allure 环境信息（--alluredir 时自动生成）
+allure-results/environment.properties
+
+# env / IDE
+.env
+.idea/
+.vscode/

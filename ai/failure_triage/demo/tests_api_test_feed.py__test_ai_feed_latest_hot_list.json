@@ -1,0 +1,56 @@
+{
+  "case_id": "tests/api/test_feed.py::test_ai_feed_latest_hot_list",
+  "created_at": "2026-11-13T10:00:00",
+  "api_exchanges": [
+    {
+      "method": "POST",
+      "path": "/feed/listLatest",
+      "status": 200,
+      "elapsed_ms": 120,
+      "request_body_redacted": {
+        "limit": 10,
+        "latest_time": 0
+      },
+      "response_json_redacted": {
+        "code": 0,
+        "video_list": [
+          {
+            "id": 1,
+            "title": "t1",
+            "create_time": 1763000000
+          }
+        ],
+        "has_more": false,
+        "next_time": 1763000000
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/feed/listLatest",
+      "status": 500,
+      "elapsed_ms": 3005,
+      "request_body_redacted": {
+        "limit": 10,
+        "latest_time": 1763000000000
+      },
+      "response_body": "500 Internal Server Error: InnoDB Deadlock found when trying to get lock"
+    }
+  ],
+  "poll_history": [
+    {
+      "attempt": 1,
+      "condition": "business_state",
+      "ok": true,
+      "detail": "latest 流首次返回成功"
+    },
+    {
+      "attempt": 2,
+      "condition": "business_state",
+      "ok": false,
+      "detail": "listLatest 返回 500（死锁特征），停止轮询并抛出"
+    }
+  ],
+  "request_id": "req-demo-0001",
+  "missing_evidence": [],
+  "auth": "token"
+}

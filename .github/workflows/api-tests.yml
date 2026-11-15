@@ -1,0 +1,84 @@
+name: API Tests
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "tests/**"
+      - "framework/**"
+      - "ai/**"
+      - ".github/workflows/api-tests.yml"
+  pull_request:
+    paths:
+      - "tests/**"
+      - "framework/**"
+      - "ai/**"
+      - ".github/workflows/api-tests.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api-tests:
+    name: API Tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (test platform)
+        uses: actions/checkout@v4
+
+      # 被测系统在独立仓库（同 owner 的 feedsystem_video_go，可用仓库变量 SUT_REPOSITORY 覆盖）
+      - name: Checkout system under test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.SUT_REPOSITORY || format('{0}/feedsystem_video_go', github.repository_owner) }}
+          ref: main
+          path: sut
+
+      # 与部署同一条路径拉起被测系统：compose 内置 healthcheck，
+      # --wait 会阻塞到 mysql/redis/rabbitmq/feishu-mock/backend/worker 全部健康，探活交给 compose
+      - name: Start system under test (docker compose)
+        run: docker compose -f sut/docker-compose.yml up -d --build --wait mysql redis rabbitmq feishu-mock backend worker
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      # 后端就绪兜底探活由 tests/gates.py 的就绪门禁负责（fail fast）
+      # --alluredir 落 Allure JSON 结果（五步法·第四步），供下方生成 HTML 报告
+      - name: Run API tests
+        run: >
+          pytest tests/api/ -v
+          --junitxml=reports/junit.xml
+          --html=reports/report.html --self-contained-html
+          --alluredir=reports/allure-results --clean-alluredir
+
+      # 五步法·第五步：JSON 结果 -> 交互式 HTML 报告（Behaviors/Severity/趋势视图）
+      - name: Generate Allure report
+        if: always()
+        run: npx -y allure-commandline generate reports/allure-results -o reports/allure-html --clean
+
+      # 标准库解析 JUnit XML，总/过/挂/跳 + 每条用例结果写入 Job Summary
+      - name: Write job summary
+        if: always()
+        run: python tests/tools/junit_summary.py reports/junit.xml >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_id }}
+          path: reports/
+          retention-days: 14

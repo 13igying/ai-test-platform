@@ -1,0 +1,42 @@
+# 业务规则库（改进方案 4.1 第二层）：AI 生成的用例必须与这里的"人工确认过的
+# 业务语义"对齐，validator.py 据此做业务校验。这些规则来自对 handler 源码的
+# 确认，是"合同"而非"建议"——LLM 与规则冲突时，规则赢。
+
+scenario: feed_cursor
+target_api: POST /feed/listLatest
+
+limit:
+  domain: [1, 50]
+  default: 10
+  # 实测 handler.go：limit 越界（0 / 51 / 负数）不报错，静默重置为默认 10
+  out_of_domain_behavior: reset_to_default
+
+cursor:
+  field: latest_time
+  unit: millisecond
+  semantic: strictly_less_than          # 只返回 create_time 严格小于游标的视频
+  future_value_behavior: empty_page     # 超前游标（未来时间）返回空列表而非报错
+  missing_or_zero_behavior: first_page  # 缺省/0 视为第一页
+  # 易错点：listByFollowing 的 latest_time 是"秒"！与 listLatest 的毫秒不同源，
+  # 两接口游标不可互串——这是历史踩坑点，生成用例时禁止混用。
+
+duplicate_policy: cross_page_duplicates_not_allowed   # 翻页不允许出现重复视频
+
+auth:
+  mode: soft                            # 匿名可浏览（token 可选）
+  anonymous_allowed: true
+
+related_apis:
+  POST /feed/listByFollowing:
+    auth: hard                          # 无 token 必须 401
+    cursor_unit: second
+  POST /feed/listLikesCount:
+    cursor_pair: [likes_count_before, id_before]
+    cursor_pair_required: true          # 复合游标必须成对出现
+    order: likes_count_desc
+  POST /feed/listByTag:
+    request_field: tag_name
+    response_shape: video_list_only     # 无 has_more/next_time 游标字段
+
+# 白名单允许的参数键（GeneratedCase.params 的合法键集）
+param_keys: [limit, latest_time, likes_count_before, id_before, tag_name]

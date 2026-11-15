@@ -1,0 +1,122 @@
+openapi: 3.0.3
+info:
+  title: feedsystem-go Feed API（用例生成白名单契约）
+  version: 1.0.0
+  description: >
+    只收录 AI 用例生成允许的接口。契约是生成的"地基"：prompt 注入本文件
+    摘要，validator 校验 api 字段必须出现在 paths 中。字段语义以
+    business_rules/feed_rules.yaml 为准（本文件只描述结构）。
+paths:
+  /feed/listLatest:
+    post:
+      summary: 最新流（软认证，游标 latest_time 单位毫秒）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
+                latest_time: { type: integer, format: int64, description: 毫秒时间戳游标 }
+      responses:
+        "200":
+          description: FeedResponse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedResponse" }
+  /feed/listLikesCount:
+    post:
+      summary: 热度流（likes_count 降序，复合游标必须成对）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
+                likes_count_before: { type: integer }
+                id_before: { type: integer }
+      responses:
+        "200":
+          description: FeedResponse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedResponse" }
+  /feed/listByFollowing:
+    post:
+      summary: 关注流（硬认证，游标 latest_time 单位秒）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
+                latest_time: { type: integer, format: int64, description: 秒级时间戳游标 }
+      responses:
+        "200":
+          description: FeedResponse
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/FeedResponse" }
+        "401": { description: 未认证 }
+  /feed/listByTag:
+    post:
+      summary: 标签流（响应仅 video_list，无游标）
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tag_name]
+              properties:
+                tag_name: { type: string }
+                limit: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        "200":
+          description: TagFeedResponse
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [video_list]
+                properties:
+                  video_list:
+                    type: array
+                    items: { $ref: "#/components/schemas/FeedVideoItem" }
+components:
+  schemas:
+    FeedAuthor:
+      type: object
+      required: [id, username]
+      properties:
+        id: { type: integer }
+        username: { type: string }
+    FeedVideoItem:
+      type: object
+      required: [id, author, title, play_url, cover_url, create_time, likes_count, is_liked]
+      properties:
+        id: { type: integer }
+        author: { $ref: "#/components/schemas/FeedAuthor" }
+        title: { type: string }
+        description: { type: string }
+        play_url: { type: string }
+        cover_url: { type: string }
+        create_time: { type: integer, format: int64, description: 秒级时间戳 }
+        likes_count: { type: integer }
+        is_liked: { type: boolean }
+    FeedResponse:
+      type: object
+      required: [video_list, has_more]
+      properties:
+        video_list:
+          type: array
+          items: { $ref: "#/components/schemas/FeedVideoItem" }
+        has_more: { type: boolean }
+        next_time: { type: integer, description: listLatest/listByFollowing 的下一页游标 }
+        next_likes_count_before: { type: integer, description: listLikesCount 复合游标之一 }
+        next_id_before: { type: integer, description: listLikesCount 复合游标之一 }

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 分诊演示输入：模拟一次 pytest junitxml 的产物（3 条失败，含计划 5.4 死锁场景）。
+     两条同因死锁失败用于演示 signature 聚合（duplicate_of）。 -->
+<testsuites>
+  <testsuite name="pytest" errors="0" failures="3" tests="3" time="6.4">
+    <testcase classname="tests.api.test_feed" name="test_ai_feed_latest_hot_list" time="2.31">
+      <failure message="APIError: POST /feed/listLatest [响应] 500 — InnoDB: Deadlock found when trying to get lock; try restarting transaction（热门流缓存重建与发布事务互锁）" type="APIError">traceback: ... feed_api.latest ... status=500</failure>
+    </testcase>
+    <testcase classname="tests.api.test_feed" name="test_ai_feed_latest_hot_list_replay" time="1.87">
+      <failure message="APIError: POST /feed/listLatest [响应] 500 — InnoDB: Deadlock found when trying to get lock; try restarting transaction（热门流缓存重建与发布事务互锁）" type="APIError">traceback: ... feed_api.latest ... status=500</failure>
+    </testcase>
+    <testcase classname="tests.api.test_account" name="test_register_after_backend_down" time="0.05">
+      <error message="httpx.ConnectError: All connection attempts failed（后端 8080 未就绪）" type="ConnectError">traceback: ... httpx ... ConnectError</error>
+    </testcase>
+  </testsuite>
+</testsuites>

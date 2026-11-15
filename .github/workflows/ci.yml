@@ -1,0 +1,113 @@
+name: CI (AI Test Platform)
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # 离线层：框架/AI 模块单测 + AI 平台离线演示（无后端、无 LLM Key 也能跑）
+  unit-offline:
+    name: Unit Offline (framework + ai)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      - name: 离线单元测试（framework + ai 模块）
+        run: pytest tests/unit -q --junitxml=reports/junit_unit.xml
+
+      - name: AI 用例生成离线演示（生成 → 校验 → 去重 → 评估）
+        run: python -m ai.case_generation.cli demo
+
+      - name: AI 失败分诊离线演示（rules_only 降级路径）
+        run: python -m ai.failure_triage.cli --demo --out ai_data/triage_ci
+
+      - name: Upload AI artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ai-artifacts
+          path: |
+            ai_data/generated/
+            ai_data/triage_ci/
+            reports/junit_unit.xml
+
+  # 在线层：拉起被测系统（SUT 仓库的 docker compose）→ API/安全/集成回归 → 失败自动 AI 分诊
+  api-regression:
+    name: API Regression + AI Triage
+    needs: unit-offline
+    runs-on: ubuntu-latest
+    env:
+      API_BASE_URL: http://127.0.0.1:8080
+    steps:
+      - name: Checkout (test platform)
+        uses: actions/checkout@v4
+
+      # 被测系统在独立仓库；SUT_REPOSITORY 是可选的仓库级变量（owner/name），
+      # 未配置时默认同 owner 下的 feedsystem_video_go。
+      # compose 内的相对路径（backend/configs、tools/feishu-mock）相对 sut/ 解析，开箱即用。
+      - name: Checkout system under test
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ vars.SUT_REPOSITORY || format('{0}/feedsystem_video_go', github.repository_owner) }}
+          ref: main
+          path: sut
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install test dependencies
+        run: pip install -r requirements.txt
+
+      # compose --wait 等到所有 healthcheck 通过；注册/登录限流在 compose 里已放宽
+      - name: Start full stack (mysql/redis/rabbitmq/backend/worker)
+        run: docker compose -f sut/docker-compose.yml up -d --build --wait backend worker
+
+      - name: Healthz double check
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://127.0.0.1:8080/healthz && exit 0
+            sleep 2
+          done
+          echo "backend 未就绪"; exit 1
+
+      - name: API + Security + Integration regression
+        run: >
+          pytest tests/api tests/security tests/integration -q
+          --junitxml=reports/junit.xml
+          --alluredir=allure-results
+
+      - name: AI failure triage (rules-only fallback, always reports)
+        if: always()
+        run: python -m ai.failure_triage.cli --junit reports/junit.xml --evidence-dir reports/evidence --out ai_data/triage_ci
+
+      - name: Upload regression artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: regression-artifacts
+          path: |
+            reports/junit.xml
+            reports/evidence/
+            ai_data/triage_ci/
+            allure-results/
