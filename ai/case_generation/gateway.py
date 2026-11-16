@@ -30,8 +30,8 @@ class GatewayError(Exception):
 class LLMGateway:
     """进程内共享的 LLM 网关（无状态，可直接实例化）。"""
 
-    def __init__(self, settings=None, timeout: float = 120.0) -> None:
-        # 默认 120s:批量生成 JSON 用例时,30s 在真实端点实测会 ReadTimeout
+    def __init__(self, settings=None, timeout: float = 180.0) -> None:
+        # 默认 180s:批量生成 JSON 用例实测很慢(6 条 >120s,3 条可在 120s 内),30s 必超时
         self._settings = settings if settings is not None else get_settings()
         self._timeout = timeout
 
@@ -46,7 +46,12 @@ class LLMGateway:
 
     # ---------- 调用 ----------
     def chat_json(self, system: str, user: str, temperature: float = 0.2) -> Any:
-        """请求 LLM 并解析出 JSON（dict 或 list）；offline 模式抛 OfflineModeError。"""
+        """请求 LLM 并解析出 JSON（dict 或 list）；offline 模式抛 OfflineModeError。
+
+        非流式优先；若因服务端对长生成的空闲超时被掐断（ReadTimeout 等），
+        自动降级为 SSE 流式重试——chunk 持续到达使连接永不空闲，
+        不受推理网关对非流式请求的空闲时限约束。
+        """
         if not self._settings.llm_configured:
             raise OfflineModeError(
                 "未配置 AI_LLM_BASE_URL / AI_LLM_API_KEY（offline 模式），"
@@ -69,14 +74,44 @@ class LLMGateway:
             resp = self._post(url, payload, headers)
             resp.raise_for_status()
             data = resp.json()
-        except (httpx.HTTPError, ValueError) as exc:
-            raise GatewayError(f"LLM 请求失败: {type(exc).__name__}: {exc}") from exc
-
-        try:
             content = data["choices"][0]["message"]["content"]
-        except (KeyError, IndexError, TypeError) as exc:
-            raise GatewayError(f"LLM 响应结构异常: {data!r:.500}") from exc
+            if content is None:
+                raise ValueError("choices[0].message.content 为 null")
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as exc:
+            content = self._post_stream_collect(url, payload, headers, reason=exc)
         return extract_json(content)
+
+    def _post_stream_collect(self, url: str, payload: dict, headers: dict, reason: Exception) -> str:
+        """SSE 流式兜底：拼接 delta.content 后交回 extract_json 解析。"""
+        stream_payload = {**payload, "stream": True}
+        parts: list[str] = []
+        try:
+            with httpx.Client(timeout=self._timeout) as client:
+                with client.stream("POST", url, json=stream_payload, headers=headers) as resp:
+                    resp.raise_for_status()
+                    for line in resp.iter_lines():
+                        line = (line or "").strip()
+                        if not line.startswith("data:"):
+                            continue
+                        data_str = line[len("data:"):].strip()
+                        if data_str == "[DONE]":
+                            break
+                        try:
+                            chunk = json.loads(data_str)
+                        except json.JSONDecodeError:
+                            continue
+                        delta = ((chunk.get("choices") or [{}])[0].get("delta") or {}).get("content")
+                        if delta:
+                            parts.append(delta)
+        except (httpx.HTTPError, ValueError, KeyError, IndexError, TypeError) as stream_exc:
+            raise GatewayError(
+                f"LLM 请求失败（非流式: {type(reason).__name__}: {reason}; "
+                f"流式: {type(stream_exc).__name__}: {stream_exc}）"
+            ) from stream_exc
+        content = "".join(parts)
+        if not content:
+            raise GatewayError("流式响应未产生任何内容")
+        return content
 
     # ---------- 测试辅助 ----------
     def with_transport(self, transport: httpx.BaseTransport) -> "LLMGateway":
