@@ -30,7 +30,8 @@ class GatewayError(Exception):
 class LLMGateway:
     """进程内共享的 LLM 网关（无状态，可直接实例化）。"""
 
-    def __init__(self, settings=None, timeout: float = 30.0) -> None:
+    def __init__(self, settings=None, timeout: float = 120.0) -> None:
+        # 默认 120s:批量生成 JSON 用例时,30s 在真实端点实测会 ReadTimeout
         self._settings = settings if settings is not None else get_settings()
         self._timeout = timeout
 
